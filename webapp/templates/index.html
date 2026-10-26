@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Knee OA Assessment System</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand"><div class="brand-icon">K<span>+</span></div><div><b>Knee OA</b><small>Assessment System</small></div></div>
+    <div class="side-label">CLINICAL WORKSPACE</div>
+    <nav>
+      <button class="nav active" data-view="analysis"><span>▣</span> New assessment</button>
+      <button class="nav" data-view="history"><span>◷</span> Patient history</button>
+      <button class="nav" data-view="causal"><span>⌁</span> Causal insights</button>
+      <button class="nav" data-view="xai"><span>◉</span> Explainability</button>
+      <button class="nav" data-view="report"><span>▤</span> Clinical report</button>
+    </nav>
+    <div class="sidebar-bottom"><div class="secure-dot"></div><div><b>Research prototype</b><small>No patient records are stored</small></div></div>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <div><div class="eyebrow">ORTHOPAEDICS / KNEE CLINIC</div><h1>Knee Osteoarthritis Assessment</h1></div>
+      <div class="doctor"><div class="doctor-avatar">DR</div><div><b>Clinician workspace</b><small>Local demo</small></div><span>⌄</span></div>
+    </header>
+
+    <section class="view" id="view-analysis">
+      <div class="welcome"><div><h2>New patient assessment</h2><p>Review patient details, submit an X-ray to the local model server, and inspect research outputs.</p></div><span class="pill warn">DEMO MODE</span></div>
+      <div class="card patient-card">
+        <div class="section-head"><div><h3>Patient information</h3><p>Enter the details required for this assessment</p></div><span class="step">01 / 03</span></div>
+        <form id="patient-form">
+          <div class="form-grid">
+            <label>Patient / study ID<input id="patient_id" placeholder="e.g. OA-2026-001" required></label>
+            <label>Age (years)<input id="age" type="number" min="18" max="120" placeholder="Age" required></label>
+            <label>Sex <select id="sex"><option value="">Not recorded</option><option>Female</option><option>Male</option><option>Other / not specified</option></select></label>
+            <label>BMI (kg/m²)<input id="bmi" type="number" min="10" max="80" step=".1" placeholder="e.g. 27.4"></label>
+            <label>Knee side<select id="side" required><option value="">Select side</option><option>Left</option><option>Right</option><option>Both</option></select></label>
+            <label>Symptoms<input id="symptoms" placeholder="e.g. pain, stiffness, duration"></label>
+          </div>
+          <div class="form-actions"><span class="hint" id="patient-status">Details are held in this page only.</span><button class="btn secondary" type="submit">Validate details</button></div>
+        </form>
+      </div>
+
+      <div class="clinical-grid">
+        <div class="card">
+          <div class="section-head"><div><h3>02 · Knee X-ray</h3><p>Choose an image; it is sent to the local Flask server only when you run the assessment</p></div><span class="tag">PNG / JPG</span></div>
+          <label class="block-label" for="model-select">Inference model
+            <select id="model-select">
+              <option value="kl_final" selected>kl_final — locked reference model</option>
+              <option value="hybrid2">Hybrid 2 — experimental (uses age + BMI)</option>
+            </select>
+          </label>
+          <p class="hint">KneeNeXt and the research ensemble are not exposed in this API until their exact inference adapters are connected and verified.</p>
+          <label class="dropzone" for="xray-input" id="dropzone">
+            <div class="upload-icon">↑</div><b>Upload knee X-ray</b><span>Choose an image from this device</span><small>Local preview; submitted only when Run assessment is clicked</small>
+            <input type="file" id="xray-input" accept="image/png,image/jpeg,.jpg,.jpeg">
+          </label>
+          <div class="image-view hidden" id="image-view"><img id="xray-preview" alt="Selected knee X-ray preview"><div class="image-toolbar"><span id="image-name">Image selected</span><button class="text-btn" id="remove-image" type="button">Remove</button></div></div>
+          <div class="empty-image" id="empty-image"><div class="bone-symbol">⌁</div><span>No X-ray selected</span><small>Image viewer will appear here</small></div>
+        </div>
+
+        <div class="card prediction-card">
+          <div class="section-head"><div><h3>03 · KL grade assessment</h3><p>Prediction panel</p></div><span class="tag muted">NOT CONNECTED</span></div>
+          <div class="prediction-empty"><div class="grade-icon">—</div><b>Awaiting model output</b><p>Upload an X-ray and run the local research model. Not for clinical decisions.</p></div>
+          <div class="grade-scale">
+            <div><b>KL 0</b><span>None</span></div><div><b>KL 1</b><span>Doubtful</span></div><div><b>KL 2</b><span>Mild</span></div><div><b>KL 3</b><span>Moderate</span></div><div><b>KL 4</b><span>Severe</span></div>
+          </div>
+          <button class="btn primary full" id="analyze-btn" type="button">Run assessment <span>→</span></button>
+          <p class="hint center" id="analysis-status">No prediction has been made.</p>
+        </div>
+      </div>
+
+      <div class="clinical-grid lower-grid">
+        <div class="card">
+          <div class="section-head"><div><h3>Explainable AI</h3><p>Image attribution and feature-level explanations</p></div><span class="tag muted">NOT CONNECTED</span></div>
+          <div class="explain-row"><div class="mini-visual">◎</div><div><b>Grad-CAM image heatmap</b><small>Requires compatible model weights and input preprocessing.</small></div><span class="status-pending">Pending</span></div>
+          <div class="explain-row"><div class="mini-visual blue">⌁</div><div><b>Clinical feature attribution</b><small>SHAP or another validated method, if supported.</small></div><span class="status-pending">Pending</span></div>
+        </div>
+        <div class="card">
+          <div class="section-head"><div><h3>Causal insights</h3><p>Population-level observational evidence</p></div><button class="text-btn" data-open="causal">View details →</button></div>
+          <div class="insight-placeholder"><div class="insight-symbol">⌁</div><div><b>Research estimates not loaded</b><small>Verified effect estimates and confidence intervals will appear here.</small></div></div>
+          <div class="small-warning">Causal estimates describe populations under assumptions; they do not establish an individual patient's cause of disease.</div>
+        </div>
+      </div>
+      <div class="disclaimer"><b>Clinical decision support only.</b> This prototype does not diagnose or recommend treatment. A qualified clinician must interpret results alongside the full clinical assessment.</div>
+    </section>
+
+    <section class="view hidden" id="view-history">
+      <div class="welcome"><div><h2>Patient history</h2><p>Search and review previous assessments after secure storage is implemented.</p></div><span class="pill warn">NOT CONNECTED</span></div>
+      <div class="card empty-state"><div class="empty-big">◷</div><h3>No patient records available</h3><p>This starter app intentionally does not store patient details or X-ray images.</p><button class="btn primary" data-open="analysis">Start new assessment</button></div>
+    </section>
+
+    <section class="view hidden" id="view-causal">
+      <div class="welcome"><div><h2>Causal insights</h2><p>Review verified population-level estimates and the assumptions behind them.</p></div><span class="pill warn">SOURCE DATA REQUIRED</span></div>
+      <div class="card">
+        <div class="section-head"><div><h3>Research question</h3><p>Explore previously reported project estimates. These are population-level observational estimates, not individual predictions.</p></div><span class="tag">HISTORICAL RESULTS</span></div>
+        <div class="form-grid causal-form">
+          <label>Exposure<select id="causal-exposure"><option>Obesity (BMI ≥ 30)</option><option>BMI (per 1 kg/m²)</option><option>Age (per 10 years)</option><option>Family history</option></select></label>
+          <label>Outcome<select id="causal-outcome"><option>KL grade (0–4)</option><option>Moderate-to-severe OA (KL ≥ 2)</option></select></label>
+          <label>Method<select id="causal-method"><option>Compare existing estimates</option><option>Propensity score matching</option><option>Regression adjustment</option></select></label>
+          <label>Analysis population<input id="causal-population" value="One knee per patient; n = 4,071" readonly></label>
+        </div>
+        <div class="question-box" id="causal-question">Question: What is the estimated association of Obesity (BMI ≥ 30) with KL grade (0–4)?</div>
+        <div class="causal-results" id="causal-results">
+          <div class="effect-card"><span>Propensity score matching</span><strong>+0.583</strong><small>Estimated effect on KL grade</small></div>
+          <div class="effect-card"><span>Regression adjustment</span><strong>+0.485</strong><small>Estimated effect on KL grade</small></div>
+        </div>
+        <div class="small-warning"><b>Interpret carefully:</b> These are historical estimates from the project's observational analysis. They depend on the chosen DAG, covariates and identification assumptions; residual confounding may remain. Do not interpret them as proof that obesity caused a specific patient's OA. Confidence intervals and diagnostics are not displayed here because they have not been verified for this view.</div>
+      </div>
+    </section>
+
+    <section class="view hidden" id="view-xai">
+      <div class="welcome"><div><h2>Explainability</h2><p>Show the clinician what influenced a model output, once the correct model is connected.</p></div><span class="pill warn">NOT CONNECTED</span></div>
+      <div class="clinical-grid">
+        <div class="card"><div class="section-head"><div><h3>Image explanation</h3><p>Grad-CAM / saliency map</p></div></div><div class="empty-state"><div class="empty-big">◉</div><h3>No attribution map</h3><p>A real heatmap requires the matching trained checkpoint, architecture and image preprocessing.</p></div></div>
+        <div class="card"><div class="section-head"><div><h3>Clinical feature explanation</h3><p>SHAP or validated feature attribution</p></div></div><div class="empty-state"><div class="empty-big">⌁</div><h3>No feature attribution</h3><p>Feature values will only be displayed after computation from a connected, validated model.</p></div></div>
+      </div>
+      <div class="disclaimer"><b>Interpretability caution.</b> Heatmaps are not proof of clinical reasoning. Explanations require faithfulness, stability and clinical relevance checks.</div>
+    </section>
+
+    <section class="view hidden" id="view-report">
+      <div class="welcome"><div><h2>Clinical report</h2><p>Prepare a draft for clinician review from verified assessment results.</p></div><span class="pill warn">TEMPLATE MODE</span></div>
+      <div class="clinical-grid">
+        <div class="card"><div class="section-head"><div><h3>Report inputs</h3><p>Only use verified findings</p></div></div>
+          <label class="block-label">Assessment summary<textarea id="report-summary" rows="4" placeholder="Enter verified clinical and imaging findings"></textarea></label>
+          <label class="block-label">Causal context<textarea id="report-causal" rows="3" placeholder="Optional population-level evidence and limitations"></textarea></label>
+          <label class="block-label">XAI explanation<textarea id="report-xai" rows="3" placeholder="Optional validated model explanation"></textarea></label>
+          <button class="btn primary" id="generate-report">Generate report draft</button>
+        </div>
+        <div class="card"><div class="section-head"><div><h3>Draft report</h3><p>Template-generated locally, not an LLM response</p></div><button class="text-btn" id="copy-report">Copy text</button></div><div class="report-output" id="report-output">Your draft will appear here. This template will not invent a KL grade or clinical finding.</div><div class="small-warning">Review all statements before clinical use. No diagnosis or treatment recommendation is generated.</div></div>
+      </div>
+    </section>
+    <footer>Local research prototype · No patient database · Not validated for clinical use</footer>
+  </main>
+</div>
+<div class="toast" id="toast" role="status"></div>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
