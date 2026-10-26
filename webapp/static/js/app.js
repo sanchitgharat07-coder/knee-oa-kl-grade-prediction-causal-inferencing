@@ -37,19 +37,37 @@ function toast(message) {
   }, 3200);
 }
 
-// Current assessment explanation state.
 let latestGradCamImage = null;
 let latestAssessmentInputs = null;
 let selectedImageUrl = null;
 
-function renderGradCam(
-  imageData,
-  originalImageUrl = null,
-  age = null,
-  bmi = null
-) {
-  latestGradCamImage = imageData || null;
-  latestAssessmentInputs = imageData ? { age, bmi } : null;
+function normaliseImageSource(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+
+  const source = value.trim();
+
+  // A server may return a complete data URL.
+  if (source.startsWith("data:image/")) return source;
+
+  // Support raw base64 returned by the Flask API.
+  if (/^[A-Za-z0-9+/=\r\n]+$/.test(source) && source.length > 100) {
+    return `data:image/png;base64,${source.replace(/\s/g, "")}`;
+  }
+
+  // Relative or absolute HTTP URLs are also supported.
+  if (source.startsWith("/") || /^https?:\/\//i.test(source)) {
+    return source;
+  }
+
+  return null;
+}
+window.latestModelInputImage = data.model_input_image || null;
+
+function renderGradCam(imageData, originalImageUrl = null, age = null, bmi = null) {
+  const normalisedImage = normaliseImageSource(imageData);
+
+  latestGradCamImage = normalisedImage;
+  latestAssessmentInputs = normalisedImage ? { age, bmi } : null;
 
   const xaiView = $("view-xai");
   if (!xaiView) return;
@@ -66,14 +84,12 @@ function renderGradCam(
     const status = overviewRows[0].querySelector(".status-pending");
 
     if (description) {
-      description.textContent = imageData
+      description.textContent = normalisedImage
         ? "Grad-CAM generated for the current uploaded X-ray."
         : "Run an assessment to generate an image heatmap.";
     }
 
-    if (status) {
-      status.textContent = imageData ? "Generated" : "Pending";
-    }
+    if (status) status.textContent = normalisedImage ? "Generated" : "Pending";
   }
 
   if (overviewRows[1]) {
@@ -89,11 +105,11 @@ function renderGradCam(
   }
 
   if (xaiStatus) {
-    xaiStatus.textContent = imageData
+    xaiStatus.textContent = normalisedImage
       ? "EXPERIMENTAL OUTPUT"
       : "AWAITING ASSESSMENT";
 
-    xaiStatus.classList.toggle("warn", !imageData);
+    xaiStatus.classList.toggle("warn", !normalisedImage);
   }
 
   if (cards.length < 2) return;
@@ -101,12 +117,10 @@ function renderGradCam(
   const imageCard = cards[0];
   const featureCard = cards[1];
 
-  // Image explanation.
   let explanationArea = imageCard.querySelector("#grad-cam-result");
 
   if (!explanationArea) {
-    const emptyState = imageCard.querySelector(".empty-state");
-    if (emptyState) emptyState.remove();
+    imageCard.querySelector(".empty-state")?.remove();
 
     explanationArea = document.createElement("div");
     explanationArea.id = "grad-cam-result";
@@ -115,12 +129,11 @@ function renderGradCam(
 
   explanationArea.replaceChildren();
 
-  if (imageData) {
+  if (normalisedImage) {
     const comparison = document.createElement("div");
 
     comparison.style.display = "grid";
-    comparison.style.gridTemplateColumns =
-      "repeat(auto-fit, minmax(220px, 1fr))";
+    comparison.style.gridTemplateColumns = "repeat(auto-fit, minmax(220px, 1fr))";
     comparison.style.gap = "16px";
 
     function createImageFigure(title, src, alt) {
@@ -144,32 +157,47 @@ function renderGradCam(
       image.style.borderRadius = "8px";
       image.style.background = "#f1f5f9";
 
+      image.addEventListener("error", () => {
+        image.alt = `${title} could not be loaded. Check the image URL returned by the backend.`;
+        image.removeAttribute("src");
+      }, { once: true });
+
       figure.append(heading, image);
       return figure;
     }
 
-    if (originalImageUrl) {
-      comparison.appendChild(
-        createImageFigure(
-          "Original X-ray",
-          originalImageUrl,
-          "Original uploaded knee X-ray"
-        )
-      );
-    }
+    const modelInputImage = window.latestModelInputImage || null;
+
+if (modelInputImage) {
+  comparison.appendChild(
+    createImageFigure(
+      "Model input (224 × 224)",
+      modelInputImage,
+      "224 by 224 preprocessed model input"
+    )
+  );
+} else if (originalImageUrl) {
+  // Fallback until the backend returns the preprocessed image.
+  comparison.appendChild(
+    createImageFigure(
+      "Uploaded X-ray (preview)",
+      originalImageUrl,
+      "Original uploaded knee X-ray"
+    )
+  );
+}
 
     comparison.appendChild(
       createImageFigure(
         "Grad-CAM overlay",
-        imageData,
+        normalisedImage,
         "Experimental Grad-CAM overlay for the uploaded knee X-ray"
       )
     );
 
     const caption = document.createElement("p");
     caption.textContent =
-      "Exploratory visualization of regions influencing the model's combined CORAL threshold logits. This is not a diagnosis or proof of clinical reasoning.";
-
+      "Exploratory visualization of regions influencing the model output. This is not a diagnosis or proof of clinical reasoning.";
     caption.style.fontSize = "12px";
     caption.style.lineHeight = "1.6";
     caption.style.marginTop = "12px";
@@ -184,18 +212,16 @@ function renderGradCam(
 
     const description = document.createElement("p");
     description.textContent =
-      "Run a successful assessment to display the original X-ray and its Grad-CAM overlay.";
+      "The assessment completed, but the backend did not return a usable Grad-CAM image.";
 
     message.append(heading, description);
     explanationArea.appendChild(message);
   }
 
-  // Clinical inputs are not the same as SHAP explanations.
   let featureArea = featureCard.querySelector("#clinical-input-summary");
 
   if (!featureArea) {
-    const emptyState = featureCard.querySelector(".empty-state");
-    if (emptyState) emptyState.remove();
+    featureCard.querySelector(".empty-state")?.remove();
 
     featureArea = document.createElement("div");
     featureArea.id = "clinical-input-summary";
@@ -209,7 +235,7 @@ function renderGradCam(
 
   const explanation = document.createElement("p");
   explanation.textContent =
-    "These values were supplied to Hybrid 2. They are not SHAP values or estimates of each feature's contribution.";
+    "These are input values supplied to Hybrid 2, not SHAP feature contributions.";
 
   const inputList = document.createElement("ul");
 
@@ -223,15 +249,9 @@ function renderGradCam(
   });
 
   const pending = document.createElement("p");
-  pending.textContent =
-    "Patient-specific SHAP attribution: not computed.";
+  pending.textContent = "Patient-specific SHAP attribution: not computed.";
 
-  featureArea.append(
-    featureHeading,
-    explanation,
-    inputList,
-    pending
-  );
+  featureArea.append(featureHeading, explanation, inputList, pending);
 }
 
 function clearAssessmentDisplay() {
@@ -241,14 +261,23 @@ function clearAssessmentDisplay() {
   const predictionPanel = predictionCard?.querySelector(".prediction-empty");
 
   if (predictionPanel) {
-    predictionPanel.innerHTML = `
-      <div class="grade-icon">KL —</div>
-      <b>No assessment yet</b>
-      <p>Select an X-ray and run the research model.</p>
-    `;
+    predictionPanel.replaceChildren();
+
+    const icon = document.createElement("div");
+    icon.className = "grade-icon";
+    icon.textContent = "KL —";
+
+    const heading = document.createElement("b");
+    heading.textContent = "No assessment yet";
+
+    const description = document.createElement("p");
+    description.textContent = "Select an X-ray and run the research model.";
+
+    predictionPanel.append(icon, heading, description);
   }
 
   const tag = predictionCard?.querySelector(".section-head .tag");
+
   if (tag) {
     tag.textContent = "AWAITING ASSESSMENT";
     tag.classList.add("muted");
@@ -263,9 +292,9 @@ $("patient-form")?.addEventListener("submit", async (event) => {
   event.preventDefault();
 
   const payload = {
-    patient_id: $("patient_id").value.trim(),
-    age: $("age").value,
-    side: $("side").value
+    patient_id: $("patient_id")?.value.trim() || "",
+    age: $("age")?.value || "",
+    side: $("side")?.value || ""
   };
 
   try {
@@ -277,24 +306,23 @@ $("patient-form")?.addEventListener("submit", async (event) => {
 
     const data = await response.json();
 
-    $("patient-status").textContent = data.message || data.error;
+    if ($("patient-status")) {
+      $("patient-status").textContent =
+        data.message || data.error || "Request completed.";
+    }
 
-    toast(
-      data.ok
-        ? "Required patient details validated."
-        : data.error || "Validation failed."
-    );
+    toast(data.ok ? "Patient details validated." : data.error || "Validation failed.");
   } catch {
-    $("patient-status").textContent =
-      "Backend unavailable. Start Flask to validate details.";
-
+    if ($("patient-status")) {
+      $("patient-status").textContent = "Backend unavailable. Start Flask.";
+    }
     toast("Could not reach the backend.");
   }
 });
 
 // X-ray selection and local preview.
 $("xray-input")?.addEventListener("change", (event) => {
-  const file = event.target.files && event.target.files[0];
+  const file = event.target.files?.[0];
   if (!file) return;
 
   if (!["image/png", "image/jpeg"].includes(file.type)) {
@@ -303,42 +331,37 @@ $("xray-input")?.addEventListener("change", (event) => {
     return;
   }
 
-  if (selectedImageUrl) {
-    URL.revokeObjectURL(selectedImageUrl);
-  }
+  if (selectedImageUrl) URL.revokeObjectURL(selectedImageUrl);
 
   clearAssessmentDisplay();
-
   selectedImageUrl = URL.createObjectURL(file);
 
-  $("xray-preview").src = selectedImageUrl;
-  $("image-name").textContent = file.name;
-  $("image-view").classList.remove("hidden");
-  $("empty-image").classList.add("hidden");
+  if ($("xray-preview")) $("xray-preview").src = selectedImageUrl;
+  if ($("image-name")) $("image-name").textContent = file.name;
 
-  toast(
-    "Image preview opened locally. No prediction has been run yet."
-  );
+  $("image-view")?.classList.remove("hidden");
+  $("empty-image")?.classList.add("hidden");
+
+  toast("Image preview opened locally. No prediction has been run yet.");
 });
 
 $("remove-image")?.addEventListener("click", () => {
-  if (selectedImageUrl) {
-    URL.revokeObjectURL(selectedImageUrl);
-  }
+  if (selectedImageUrl) URL.revokeObjectURL(selectedImageUrl);
 
   selectedImageUrl = null;
-  $("xray-input").value = "";
-  $("xray-preview").removeAttribute("src");
 
-  $("image-view").classList.add("hidden");
-  $("empty-image").classList.remove("hidden");
+  if ($("xray-input")) $("xray-input").value = "";
+  $("xray-preview")?.removeAttribute("src");
+
+  $("image-view")?.classList.add("hidden");
+  $("empty-image")?.classList.remove("hidden");
 
   clearAssessmentDisplay();
 });
 
-// Submit an X-ray to the local Flask inference API.
+// Image inference uses multipart POST. Never place image data in a URL.
 $("analyze-btn")?.addEventListener("click", async () => {
-  const file = $("xray-input").files[0];
+  const file = $("xray-input")?.files?.[0];
 
   if (!file) {
     toast("Select an X-ray first.");
@@ -346,14 +369,17 @@ $("analyze-btn")?.addEventListener("click", async () => {
   }
 
   const model = $("model-select")?.value || "kl_final";
-  const age = Number($("age").value);
-  const bmi = Number($("bmi").value);
+  const ageValue = $("age")?.value;
+  const bmiValue = $("bmi")?.value;
+  const age = ageValue === "" || ageValue == null ? NaN : Number(ageValue);
+  const bmi = bmiValue === "" || bmiValue == null ? NaN : Number(bmiValue);
 
   if (model === "hybrid2") {
     if (!Number.isFinite(age) || age < 18 || age > 120) {
       toast("Hybrid 2 requires a valid age between 18 and 120.");
       return;
     }
+
     if (!Number.isFinite(bmi) || bmi < 10 || bmi > 80) {
       toast("Hybrid 2 requires a valid BMI between 10 and 80.");
       return;
@@ -361,12 +387,18 @@ $("analyze-btn")?.addEventListener("click", async () => {
   }
 
   const button = $("analyze-btn");
+  if (!button) return;
+
   button.disabled = true;
-  $("analysis-status").textContent = "Running research model…";
+
+  if ($("analysis-status")) {
+    $("analysis-status").textContent = "Running research model…";
+  }
 
   const formData = new FormData();
   formData.append("xray", file);
   formData.append("model", model);
+
   if (model === "hybrid2") {
     formData.append("age", String(age));
     formData.append("bmi", String(bmi));
@@ -375,14 +407,19 @@ $("analyze-btn")?.addEventListener("click", async () => {
   try {
     const response = await fetch("/api/analyze", {
       method: "POST",
-      body: formData
+      body: formData,
+      cache: "no-store"
     });
 
-    const data = await response.json();
+    const data = await response.json().catch(() => ({}));
 
     if (!response.ok || !data.ok) {
-      clearAssessmentDisplay();
-      throw new Error(data.message || "Assessment failed.");
+      throw new Error(
+        data.message || data.error ||
+        (response.status === 414
+          ? "The server rejected an oversized URL. Check frontend links or redirects."
+          : `Assessment failed (HTTP ${response.status}).`)
+      );
     }
 
     const labels = [
@@ -400,50 +437,68 @@ $("analyze-btn")?.addEventListener("click", async () => {
     }
 
     const probabilities = Array.isArray(data.probabilities)
-      ? data.probabilities
+      ? data.probabilities.map(Number)
       : [];
 
     if (
       probabilities.length !== 5 ||
-      probabilities.some(
-        (value) => !Number.isFinite(Number(value)) || Number(value) < 0
-      )
+      probabilities.some((value) => !Number.isFinite(value) || value < 0)
     ) {
       throw new Error("The server returned invalid grade probabilities.");
     }
 
     const predictionCard = document.querySelector(".prediction-card");
-    const predictionPanel =
-      predictionCard?.querySelector(".prediction-empty");
+    const predictionPanel = predictionCard?.querySelector(".prediction-empty");
 
     if (predictionPanel) {
-      const gradeLabel = labels[grade];
+      predictionPanel.replaceChildren();
 
-      predictionPanel.innerHTML = `
-        <div class="grade-icon">KL ${grade}</div>
-        <b>${gradeLabel}</b>
-        <p>Experimental research-model output. Not a diagnosis.</p>
-        <div class="grade-probabilities">
-          ${probabilities.map((value, index) => {
-            const percentage = Math.max(
-              0,
-              Math.min(100, Number(value))
-            );
+      const gradeIcon = document.createElement("div");
+      gradeIcon.className = "grade-icon";
+      gradeIcon.textContent = `KL ${grade}`;
 
-            return `
-              <div style="margin:8px 0">
-                <div style="display:flex;justify-content:space-between;gap:12px">
-                  <span>${labels[index]}</span>
-                  <b>${percentage.toFixed(2)}%</b>
-                </div>
-                <div style="height:6px;background:#e5e7eb;border-radius:5px;overflow:hidden">
-                  <div style="height:100%;width:${percentage}%;background:#3976c5"></div>
-                </div>
-              </div>
-            `;
-          }).join("")}
-        </div>
-      `;
+      const heading = document.createElement("b");
+      heading.textContent = labels[grade];
+
+      const note = document.createElement("p");
+      note.textContent = "Experimental research-model output. Not a diagnosis.";
+
+      const probabilityContainer = document.createElement("div");
+      probabilityContainer.className = "grade-probabilities";
+
+      probabilities.forEach((value, index) => {
+        const percentage = Math.max(0, Math.min(100, value));
+
+        const row = document.createElement("div");
+        row.style.margin = "8px 0";
+
+        const line = document.createElement("div");
+        line.style.display = "flex";
+        line.style.justifyContent = "space-between";
+        line.style.gap = "12px";
+
+        const label = document.createElement("span");
+        label.textContent = labels[index];
+
+        const number = document.createElement("b");
+        number.textContent = `${percentage.toFixed(2)}%`;
+
+        line.append(label, number);
+
+        const track = document.createElement("div");
+        track.style.cssText =
+          "height:6px;background:#e5e7eb;border-radius:5px;overflow:hidden";
+
+        const fill = document.createElement("div");
+        fill.style.cssText =
+          `height:100%;width:${percentage}%;background:#3976c5`;
+
+        track.appendChild(fill);
+        row.append(line, track);
+        probabilityContainer.appendChild(row);
+      });
+
+      predictionPanel.append(gradeIcon, heading, note, probabilityContainer);
     }
 
     const tag = predictionCard?.querySelector(".section-head .tag");
@@ -453,11 +508,17 @@ $("analyze-btn")?.addEventListener("click", async () => {
       tag.classList.remove("muted");
     }
 
-    $("analysis-status").textContent =
-      data.message || "Research-model inference completed.";
+    if ($("analysis-status")) {
+      $("analysis-status").textContent =
+        data.message || "Research-model inference completed.";
+    }
+
+    // Support either response field. Backend may return a URL or base64 data.
+    const gradcamSource =
+      data.gradcam || data.grad_cam_image || data.gradcam_image || null;
 
     renderGradCam(
-      data.grad_cam_image || null,
+      gradcamSource,
       selectedImageUrl,
       model === "hybrid2" ? age : null,
       model === "hybrid2" ? bmi : null
@@ -466,8 +527,12 @@ $("analyze-btn")?.addEventListener("click", async () => {
     toast("Research-model inference completed.");
   } catch (error) {
     renderGradCam(null);
-    $("analysis-status").textContent = error.message;
-    toast(error.message);
+
+    if ($("analysis-status")) {
+      $("analysis-status").textContent = error.message || "Assessment failed.";
+    }
+
+    toast(error.message || "Assessment failed.");
   } finally {
     button.disabled = false;
   }
@@ -478,9 +543,7 @@ let causalData = null;
 
 function formatEffect(value) {
   const number = Number(value);
-
   if (!Number.isFinite(number)) return "—";
-
   return `${number > 0 ? "+" : ""}${number.toFixed(4)}`;
 }
 
@@ -502,13 +565,21 @@ function effectCard(title, value, detail) {
 }
 
 function updateQuestion() {
-  const exposure = $("causal-exposure").value;
-  const outcome = $("causal-outcome").value;
-
-  $("causal-question").textContent =
-    `Research question: What is the estimated association of ${exposure} with ${outcome}?`;
-
+  const exposureElement = $("causal-exposure");
+  const outcomeElement = $("causal-outcome");
   const container = $("causal-results");
+  const question = $("causal-question");
+
+  if (!exposureElement || !outcomeElement || !container) return;
+
+  const exposure = exposureElement.value;
+  const outcome = outcomeElement.value;
+
+  if (question) {
+    question.textContent =
+      `Research question: What is the estimated association of ${exposure} with ${outcome}?`;
+  }
+
   container.replaceChildren();
 
   if (!causalData) {
@@ -563,10 +634,7 @@ function updateQuestion() {
       });
     }
 
-    if (
-      exposure === "Age (per 10 years)" &&
-      models.age_effect?.direct_per_10y
-    ) {
+    if (exposure === "Age (per 10 years)" && models.age_effect?.direct_per_10y) {
       const direct = models.age_effect.direct_per_10y;
       const indirect = models.age_effect.indirect_per_10y;
 
@@ -598,9 +666,7 @@ function updateQuestion() {
     );
   } else {
     results.forEach((result) => {
-      container.append(
-        effectCard(result.title, result.value, result.detail)
-      );
+      container.append(effectCard(result.title, result.value, result.detail));
     });
   }
 
@@ -627,8 +693,9 @@ function updateQuestion() {
 
 async function loadCausalData() {
   const container = $("causal-results");
-  container.replaceChildren();
+  if (!container) return;
 
+  container.replaceChildren();
   container.append(
     effectCard(
       "Loading research results…",
@@ -638,14 +705,22 @@ async function loadCausalData() {
   );
 
   try {
+    // Keep this URL small. Do not append image data or large JSON to it.
     const response = await fetch("/api/causal", {
-      cache: "no-store"
+      method: "GET",
+      cache: "no-store",
+      headers: { Accept: "application/json" }
     });
 
-    const data = await response.json();
+    const data = await response.json().catch(() => ({}));
 
     if (!response.ok || !data.ok) {
-      throw new Error(data.error || "Causal API request failed.");
+      throw new Error(
+        data.error ||
+        (response.status === 414
+          ? "The causal request URL is too long. Check redirects or URL construction."
+          : `Causal API request failed (HTTP ${response.status}).`)
+      );
     }
 
     causalData = data;
@@ -673,9 +748,9 @@ if ($("causal-results")) {
 
 // Report draft.
 $("generate-report")?.addEventListener("click", () => {
-  const summary = $("report-summary").value.trim();
-  const causal = $("report-causal").value.trim();
-  const xai = $("report-xai").value.trim();
+  const summary = $("report-summary")?.value.trim() || "";
+  const causal = $("report-causal")?.value.trim() || "";
+  const xai = $("report-xai")?.value.trim() || "";
 
   const parts = [
     "CLINICAL RESEARCH REPORT DRAFT",
@@ -693,17 +768,23 @@ $("generate-report")?.addEventListener("click", () => {
     "This draft contains only user-supplied text. Verify every finding against source outputs. It is not a diagnosis or treatment recommendation."
   ];
 
-  $("report-output").textContent = parts.join("\n");
+  if ($("report-output")) {
+    $("report-output").textContent = parts.join("\n");
+  }
+
   toast("Report draft created from supplied text. No LLM was called.");
 });
 
 $("copy-report")?.addEventListener("click", async () => {
   try {
-    await navigator.clipboard.writeText(
-      $("report-output").textContent
-    );
+    await navigator.clipboard.writeText($("report-output")?.textContent || "");
     toast("Report copied.");
   } catch {
     toast("Clipboard unavailable. Select and copy the report text.");
   }
+});
+
+// Release the local preview URL when the page is closed.
+window.addEventListener("beforeunload", () => {
+  if (selectedImageUrl) URL.revokeObjectURL(selectedImageUrl);
 });

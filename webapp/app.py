@@ -1,5 +1,7 @@
 
 from pathlib import Path
+import csv
+import json
 import sys
 import base64
 import traceback
@@ -22,6 +24,7 @@ PROJECT_DIR = (
 )
 
 CHECKPOINT_DIR = PROJECT_DIR / "outputs" / "checkpoints"
+CAUSAL_DIR = PROJECT_DIR / "outputs" / "results" / "causal"
 
 if not PROJECT_DIR.is_dir():
     raise FileNotFoundError(
@@ -132,6 +135,17 @@ def get_model(model_name="kl_final"):
 
     classifier.eval()
 
+    # Diagnostic hook: log the real tensor entering the classifier.
+    def _log_classifier_input(_module, inputs):
+        if inputs and isinstance(inputs[0], torch.Tensor):
+            tensor = inputs[0]
+            log_preprocessing(
+                f"Actual classifier input tensor: shape={tuple(tensor.shape)}, "
+                f"dtype={tensor.dtype}, device={tensor.device}"
+            )
+
+    classifier.register_forward_pre_hook(_log_classifier_input)
+
     bundle = (seg_model, classifier, device)
     _model_bundles[model_name] = bundle
 
@@ -218,6 +232,51 @@ def health():
             "kl_final": (CHECKPOINT_DIR / "kl_final_best.pt").is_file(),
             "hybrid2": (CHECKPOINT_DIR / "kl_hybrid2_best.pt").is_file(),
         },
+    })
+
+
+
+
+def read_causal_csv(filename):
+    """Read saved causal-analysis CSV output; never fabricate estimates."""
+    path = CAUSAL_DIR / filename
+    if not path.is_file():
+        return None
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+@app.get("/api/causal")
+def causal_results():
+    """Serve existing causal-analysis outputs from the project."""
+    estimates = read_causal_csv("causal_estimates.csv")
+    query_results = read_causal_csv("causal_query_results.csv")
+    models_path = CAUSAL_DIR / "causal_query_models.json"
+
+    models = None
+    if models_path.is_file():
+        try:
+            models = json.loads(models_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            app.logger.exception("Could not read causal_query_models.json")
+
+    if estimates is None and query_results is None and models is None:
+        return jsonify({
+            "ok": False,
+            "error": "No causal output files were found.",
+            "expected_directory": str(CAUSAL_DIR)
+        }), 404
+
+    return jsonify({
+        "ok": True,
+        "source_directory": str(CAUSAL_DIR),
+        "causal_estimates": estimates or [],
+        "query_results": query_results or [],
+        "models": models or {},
+        "warnings": [
+            "Observational estimates depend on causal assumptions and may contain residual confounding.",
+            "The both-knees sensitivity estimates conflict across methods; do not present them as robust."
+        ]
     })
 
 

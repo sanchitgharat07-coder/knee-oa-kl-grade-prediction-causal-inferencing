@@ -326,25 +326,67 @@ def coral_probs_to_grade(probs):
     return (probs > 0.5).sum(dim=1)
 
 
+
 def grad_cam(model, x, feature_module):
-    """Grad-CAM on a CORAL-head model. Target = sum of the 4 threshold logits (a monotonic
-    proxy for the predicted grade - there's no single softmax class score to backprop from).
-    Only valid for single-input models (model(x)); not for Hybrid 2's model(img, tab).
-    Returns (cam as a (7,7) array normalized to [0,1], raw sigmoid probs for the 4 thresholds)."""
-    activations, gradients = {}, {}
-    def fwd(_, __, out): activations["v"] = out
-    def bwd(_, grad_in, grad_out): gradients["v"] = grad_out[0]
-    h1 = feature_module.register_forward_hook(fwd)
-    h2 = feature_module.register_full_backward_hook(bwd)
-    model.zero_grad()
-    logits = model(x)
-    logits.sum().backward()
-    h1.remove(); h2.remove()
-    acts, grads = activations["v"], gradients["v"]
-    weights = grads.mean(dim=(2, 3), keepdim=True)
-    cam = F.relu((weights * acts).sum(dim=1)).squeeze().detach().cpu().numpy()
-    cam = cam / (cam.max() + 1e-8)
-    return cam, torch.sigmoid(logits.detach()).squeeze().cpu().numpy()
+    """
+    Exploratory Grad-CAM for a single-input CORAL model.
+    Target: sum of the four CORAL threshold logits.
+    Returns a normalized 2D CAM and the four sigmoid threshold probabilities.
+    """
+    activations = {}
+
+    def forward_hook(_, __, output):
+        activations["value"] = output
+        if output.requires_grad:
+            output.retain_grad()
+
+    handle = feature_module.register_forward_hook(forward_hook)
+
+    try:
+        model.zero_grad(set_to_none=True)
+
+        # Gradients are required even when inference normally uses no_grad().
+        with torch.enable_grad():
+            image_tensor = x.detach().requires_grad_(True)
+            logits = model(image_tensor)
+
+            if logits.ndim != 2 or logits.shape[1] != 4:
+                raise ValueError(
+                    f"Expected CORAL logits with shape (N, 4); got {tuple(logits.shape)}"
+                )
+
+            logits.sum().backward()
+
+            acts = activations.get("value")
+            if acts is None or acts.grad is None:
+                raise RuntimeError(
+                    "Grad-CAM activations or gradients were not captured."
+                )
+
+            grads = acts.grad
+            weights = grads.mean(dim=(2, 3), keepdim=True)
+
+            cam_tensor = torch.relu((weights * acts).sum(dim=1))[0]
+            cam = cam_tensor.detach().cpu().numpy()
+
+            cam_min = float(cam.min())
+            cam_max = float(cam.max())
+
+            if cam_max > cam_min:
+                cam = (cam - cam_min) / (cam_max - cam_min)
+            else:
+                cam = np.zeros_like(cam)
+
+            threshold_probs = (
+                torch.sigmoid(logits.detach())[0].cpu().numpy()
+            )
+
+            return cam, threshold_probs
+
+    finally:
+        handle.remove()
+        model.zero_grad(set_to_none=True)
+
 
 
 def load_seg_model(kind, ckpt_dir, device):
